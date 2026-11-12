@@ -5,48 +5,68 @@ import sys
 # --- INITIALIZATION ---
 pygame.init()
 
-# Initial window dimensions matching the 5x6 landscape grid aspect ratio
+# Window dimensions matching the 5x6 landscape grid aspect ratio
 BOARD_WIDTH = 1050
 BOARD_HEIGHT = 750
 UI_HEIGHT = 110
 SCREEN_WIDTH = BOARD_WIDTH
 SCREEN_HEIGHT = BOARD_HEIGHT + UI_HEIGHT
 
-screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
-pygame.display.set_caption("Cat Board Game")
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption("Cat Board Game - 30 Squares")
 clock = pygame.time.Clock()
 
-# Fonts (base font sizes)
+# Fonts
 font_large = pygame.font.SysFont("arial", 32, bold=True)
 font_medium = pygame.font.SysFont("arial", 22)
 font_small = pygame.font.SysFont("arial", 18)
 
 # --- LOAD & SCALE IMAGES ---
-FILE_NAME_BOARD = "grid-v2-x30-arrows.png"
-FILE_NAME_CAT_1 = "cat-grey.jpg"
-FILE_NAME_CAT_2 = "cat-orange.jpg"
+try:
+    board_img = pygame.image.load("grid-v2-x30-arrows.png").convert()
+    board_img = pygame.transform.smoothscale(board_img, (BOARD_WIDTH, BOARD_HEIGHT))
+except FileNotFoundError:
+    print("Error: 'grid-v2-x30-arrows.png' not found in the script directory.")
+    sys.exit()
 
-def load_image(file_name):
-	try:
-	    raw = pygame.image.load(file_name).convert()
-	except FileNotFoundError:
-	    print(f"Error: {file_name} not found in the script directory.")
-	    sys.exit()
-	return raw
+# Try loading cat_2.jpg, fall back to cat.jpg if needed
+cat_filename = "cat_2.jpg"
+try:
+    cat_raw = pygame.image.load(cat_filename).convert_alpha()
+except FileNotFoundError:
+    try:
+        cat_filename = "cat.jpg"
+        cat_raw = pygame.image.load(cat_filename).convert_alpha()
+    except FileNotFoundError:
+        print("Error: Neither 'cat_2.jpg' nor 'cat.jpg' found in the script directory.")
+        sys.exit()
 
-board_raw = load_image(FILE_NAME_BOARD)
-sprite_raw = load_image(FILE_NAME_CAT_1)
+# Scale cat to fit nicely inside a single grid square
+CAT_SIZE = (90, 80)
+cat_img = pygame.transform.smoothscale(cat_raw, CAT_SIZE)
 
-# Optional: Remove white/light-gray background pixels around the sprite (do this once on raw image)
-SPRITE_RAW_SIZE = sprite_raw.get_size()
-for x in range(SPRITE_RAW_SIZE[0]):
-    for y in range(SPRITE_RAW_SIZE[1]):
-        r, g, b, a = sprite_raw.get_at((x, y))
+# Optional: Remove white/light-gray background pixels around the cat
+for x in range(CAT_SIZE[0]):
+    for y in range(CAT_SIZE[1]):
+        r, g, b, a = cat_img.get_at((x, y))
         if r > 215 and g > 215 and b > 215 and abs(r - g) < 10 and abs(g - b) < 10:
-            sprite_raw.set_at((x, y), (255, 255, 255, 0))
+            cat_img.set_at((x, y), (255, 255, 255, 0))
 
 # --- BOARD PATH MAPPING ---
-# Exact (row, col) path from Square 1 to Square 30 following the arrows
+MARGIN_X = BOARD_WIDTH * 0.042
+MARGIN_Y = BOARD_HEIGHT * 0.058
+GRID_W = BOARD_WIDTH - (2 * MARGIN_X)
+GRID_H = BOARD_HEIGHT - (2 * MARGIN_Y)
+CELL_W = GRID_W / 6
+CELL_H = GRID_H / 5
+
+def get_cell_center(row, col):
+    """Returns the (x, y) pixel center for a given (row, col) on the 5x6 grid."""
+    x = MARGIN_X + (col + 0.5) * CELL_W
+    y = MARGIN_Y + (row + 0.5) * CELL_H
+    return (int(x), int(y))
+
+# Exact (row, col) path from Square 1 to Square 30 following the new arrows
 PATH_COORDS = [
     (4, 5), # 1  (Bottom right)
     (4, 4), # 2
@@ -80,27 +100,19 @@ PATH_COORDS = [
     (0, 0), # 30 (Finish - Top left)
 ]
 
-def get_cell_center(row, col, b_width, b_height):
-    """Returns the (x, y) pixel center dynamically based on current board dimensions."""
-    margin_x = b_width * 0.042
-    margin_y = b_height * 0.058
-    grid_w = b_width - (2 * margin_x)
-    grid_h = b_height - (2 * margin_y)
-    cell_w = grid_w / 6
-    cell_h = grid_h / 5
-
-    x = margin_x + (col + 0.5) * cell_w
-    y = margin_y + (row + 0.5) * cell_h
-    return (int(x), int(y))
+SQUARE_CENTERS = [get_cell_center(r, c) for r, c in PATH_COORDS]
 
 # --- GAME STATE VARIABLES ---
-current_index = 0
+current_index = 0          # 0 = Square 1, 29 = Square 30
 target_index = 0
 dice_value = None
 is_rolling = False
 roll_timer = 0
 move_timer = 0
 game_won = False
+
+# Button rectangle for rolling the dice
+roll_button = pygame.Rect(SCREEN_WIDTH - 240, BOARD_HEIGHT + 25, 200, 60)
 
 def reset_game():
     global current_index, target_index, dice_value, is_rolling, game_won
@@ -114,38 +126,14 @@ def trigger_roll():
     global is_rolling, roll_timer
     if not is_rolling and current_index == target_index and not game_won:
         is_rolling = True
-        roll_timer = 18
+        roll_timer = 18  # Frames of dice rolling animation
 
 # --- MAIN GAME LOOP ---
 running = True
 while running:
-    current_w, current_h = screen.get_size()
-
-    # Keep board proportional to window width, reserving 110px at bottom for UI
-    curr_board_height = max(400, current_h - 110)
-    curr_board_width = current_w
-
-    # Rescale board image dynamically to fit current window size
-    scaled_board_img = pygame.transform.smoothscale(board_raw, (curr_board_width, curr_board_height))
-
-    # Rescale sprite image proportional to board grid size
-    sprite_size_w = int(curr_board_width / 6 * 0.7)
-    sprite_size_h = int(curr_board_height / 5 * 0.7)
-    scaled_sprite_img = pygame.transform.smoothscale(sprite_raw, (max(20, sprite_size_w), max(20, sprite_size_h)))
-
-    # Recalculate cell centers based on current window dimensions
-    square_centers = [get_cell_center(r, c, curr_board_width, curr_board_height) for r, c in PATH_COORDS]
-
-    # Dynamic roll button positioning on the UI bar
-    roll_button = pygame.Rect(current_w - 240, curr_board_height + 25, 200, 55)
-
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-
-        # Handle window resizing event
-        elif event.type == pygame.VIDEORESIZE:
-            screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
 
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE:
@@ -164,36 +152,38 @@ while running:
                     trigger_roll()
 
     # --- UPDATE LOGIC ---
+    # 1. Dice rolling animation
     if is_rolling:
         dice_value = random.randint(1, 6)
         roll_timer -= 1
         if roll_timer <= 0:
             is_rolling = False
-            target_index = min(current_index + dice_value, len(square_centers) - 1)
+            # Set destination square (capped at square 30 / index 29)
+            target_index = min(current_index + dice_value, len(SQUARE_CENTERS) - 1)
             move_timer = 10
 
+    # 2. Step-by-step cat movement along the path
     elif current_index < target_index:
         move_timer -= 1
         if move_timer <= 0:
             current_index += 1
-            move_timer = 10
-            if current_index == len(square_centers) - 1:
+            move_timer = 10  # Delay between hops (frames)
+            if current_index == len(SQUARE_CENTERS) - 1:
                 game_won = True
 
     # --- RENDERING ---
     screen.fill((245, 246, 250))
 
-    # Draw scaled game board
-    screen.blit(scaled_board_img, (0, 0))
+    # Draw the game board
+    screen.blit(board_img, (0, 0))
 
-    # Draw the sprite centered in its current square
-    sprite_center = square_centers[current_index]
-    sprite_rect = scaled_sprite_img.get_rect(center=sprite_center)
-    screen.blit(scaled_sprite_img, sprite_rect)
+    # Draw the cat centered in its current square
+    cat_center = SQUARE_CENTERS[current_index]
+    cat_rect = cat_img.get_rect(center=(cat_center[0] + 5, cat_center[1] + 5))
+    screen.blit(cat_img, cat_rect)
 
     # Draw Bottom UI Bar
-    ui_height_val = current_h - curr_board_height
-    pygame.draw.rect(screen, (35, 40, 50), (0, curr_board_height, current_w, ui_height_val))
+    pygame.draw.rect(screen, (35, 40, 50), (0, BOARD_HEIGHT, SCREEN_WIDTH, UI_HEIGHT))
 
     # Status / Dice Text
     square_num = current_index + 1
@@ -211,13 +201,13 @@ while running:
         status_text = f"{dice_display}Current Square: {square_num} of 30"
         sub_text = "Press SPACE or click 'Roll Dice' to move."
 
-    screen.blit(font_large.render(status_text, True, (255, 255, 255)), (30, curr_board_height + 15))
-    screen.blit(font_small.render(sub_text, True, (180, 190, 205)), (30, curr_board_height + 55))
+    screen.blit(font_large.render(status_text, True, (255, 255, 255)), (35, BOARD_HEIGHT + 18))
+    screen.blit(font_small.render(sub_text, True, (180, 190, 205)), (35, BOARD_HEIGHT + 65))
 
     # Draw Roll / Play Again Button
     btn_color = (46, 204, 113) if game_won else (52, 152, 219)
     if is_rolling or current_index < target_index:
-        btn_color = (127, 140, 141)
+        btn_color = (127, 140, 141)  # Disabled gray while moving
 
     pygame.draw.rect(screen, btn_color, roll_button, border_radius=10)
     btn_label = "Play Again" if game_won else "Roll Dice"
